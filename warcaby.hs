@@ -85,26 +85,71 @@ hasAnotherJump board pos@(r, c) =
          enemy piece (getPiece board middle) &&
          getPiece board target == '.'
 
+makeMovesSequence :: Board -> [Position] -> Maybe Board
+makeMovesSequence board positions = 
+  case positions of
+    (start:_) ->
+      applyMoves board positions
+    _ -> Nothing
+  where
+    applyMoves :: Board -> [Position] -> Maybe Board
+    applyMoves b [from, to] =
+      let dr = abs (fst from - fst to)
+          dc = abs (snd from - snd to)
+      in case (dr, dc) of
+           (1, 1) -> 
+             makeMove b from to
+           (2, 2) ->
+             case makeMove b from to of
+               Just nb ->
+                 if hasAnotherJump nb to
+                   then Nothing
+                   else Just nb
+               Nothing -> Nothing
+           _ -> Nothing
+
+    applyMoves b (from:to:next:rest) =
+      let dr = abs (fst from - fst to)
+          dc = abs (snd from - snd to)
+      in if (dr, dc) == (2, 2)
+           then case makeMove b from to of
+                  Just nb ->
+                    if hasAnotherJump nb to
+                      then applyMoves nb (to:next:rest)
+                      else Nothing
+                  Nothing -> Nothing
+           else Nothing
+    applyMoves _ _ = Nothing
+
+-- TODO nie możemy się cofaać dla x/o
 gameLoop :: Board -> Bool -> IO ()
 gameLoop board isWhiteTurn = do
   printBoard board
   putStrLn $ if isWhiteTurn then "Białe (o) ruszają" else "Czarne (x) ruszają"
-  putStrLn "Podaj ruch w formacie: r1 c1 r2 c2"
+  putStrLn "Podaj ruch w formacie: r1 c1 r2 c2 ..."
   input <- getLine
-  case map readMaybe (words input) of
-    [Just r1, Just c1, Just r2, Just c2] -> do
-      let from = (r1, c1)
-          to = (r2, c2)
-          piece = getPiece board from
-      if (isWhiteTurn && toLower piece /= 'o') || (not isWhiteTurn && toLower piece /= 'x')
-        then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
-        else case makeMove board from to of
-          Just newBoard -> 
-            if abs (r1 - r2) == 2 && hasAnotherJump newBoard to
-              then gameLoop newBoard isWhiteTurn
-              else gameLoop newBoard (not isWhiteTurn)
-          Nothing -> putStrLn "Nieprawidłowy ruch!" >> gameLoop board isWhiteTurn
-    _ -> putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+  let maybeInts = map readMaybe (words input) :: [Maybe Int]
+  if any (== Nothing) maybeInts
+    then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+    else
+      let ints = map (\(Just x) -> x) maybeInts
+      in if length ints < 4 || odd (length ints)
+           then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+           else
+             let coords = pairUp ints
+                 start@(r1, c1) = head coords
+                 piece = getPiece board start
+                 isCorrectPiece = (isWhiteTurn && toLower piece == 'o') || (not isWhiteTurn && toLower piece == 'x')
+             in if not isCorrectPiece
+                  then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
+                  else case makeMovesSequence board coords of
+                         Just newBoard -> gameLoop newBoard (not isWhiteTurn)
+                         Nothing       -> putStrLn "Nieprawidłowy ruch!" >> gameLoop board isWhiteTurn
+
+pairUp :: [Int] -> [Position]
+pairUp []         = []
+pairUp (r:c:rest) = (r, c) : pairUp rest
+pairUp _          = []
 
 readMaybe :: Read a => String -> Maybe a
 readMaybe s = case reads s of
