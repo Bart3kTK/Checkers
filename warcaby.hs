@@ -75,16 +75,17 @@ promoteIfNeeded board (r, c)
 
 hasAnotherJump :: Board -> Position -> Bool
 hasAnotherJump board pos@(r, c) =
-  any canJump (moveDirs piece)
+  any canJump directions
   where
     piece = getPiece board pos
+    directions = [(-1,-1), (-1,1), (1,-1), (1,1)]  -- wszystkie kierunki
     canJump (dr, dc) =
       let middle = (r + dr, c + dc)
           target = (r + 2*dr, c + 2*dc)
       in isInside middle && isInside target &&
          enemy piece (getPiece board middle) &&
          getPiece board target == '.'
-
+         
 makeMovesSequence :: Board -> [Position] -> Maybe Board
 makeMovesSequence board positions = 
   case positions of
