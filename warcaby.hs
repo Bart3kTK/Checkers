@@ -8,16 +8,16 @@ type Board = [[Char]]
 type Position = (Int, Int)
 
 initialBoard :: Board
--- initialBoard =
---   [ "x.x.x.x."
---   , ".x.x.x.x"
---   , "x.x.x.x."
---   , "........"
---   , "........"
---   , ".o.o.o.o"
---   , "o.o.o.o."
---   , ".o.o.o.o"
---   ]
+initialBoard =
+  [ "x.x.x.x."
+  , ".x.x.x.x"
+  , "x.x.x.x."
+  , "........"
+  , "........"
+  , ".o.o.o.o"
+  , "o.o.o.o."
+  , ".o.o.o.o"
+  ]
 
 -- initialBoard = -- end game debug
 --   , "........"
@@ -41,16 +41,57 @@ initialBoard :: Board
 --   , ".o...o.o"
 --   ]
 
-initialBoard = --promocja
-  [ "........"
-  , ".......o"
-  , "........"
-  , "........"
-  , ".x......"
-  , "........"
-  , "........"
-  , ".o...o.o"
-  ]
+-- initialBoard = --promocja
+--   [ "........"
+--   , ".......o"
+--   , "........"
+--   , "........"
+--   , ".x......"
+--   , "........"
+--   , "........"
+--   , ".o...o.o"
+--   ]
+
+-- initialBoard = [ --obliczanie heurystyki
+--     "........"
+--   , "........"
+--   , ".....x.."
+--   , "........"
+--   , "...x...."
+--   , "..o....."
+--   , ".....O.."
+--   , "........"
+--   ]
+
+countPossibleJumps :: Board -> Char -> Int
+countPossibleJumps board player =
+  length [ (r, c)
+         | r <- [0..7], c <- [0..7]
+         , let p = getPiece board (r, c)
+         , toLower p == player
+         , any (canJumpFrom (r, c) p) [(-1,-1), (-1,1), (1,-1), (1,1)]
+         ]
+  where
+    canJumpFrom (r, c) piece (dr, dc) =
+      let middle = (r + dr, c + dc)
+          target = (r + 2*dr, c + 2*dc)
+      in isInside middle && isInside target &&
+         enemy piece (getPiece board middle) &&
+         getPiece board target == '.'
+
+scorePiece :: Char -> Int
+scorePiece p
+        | p == 'o' = 1
+        | p == 'O' = 3
+        | p == 'x' = -1
+        | p == 'X' = -3
+        | otherwise = 0
+
+evaluateBoard :: Board -> Int
+evaluateBoard board =
+  let allPieces = concat board
+      jumpBonus = 2 * countPossibleJumps board 'o' - 2 * countPossibleJumps board 'x'
+  in sum (map scorePiece allPieces) + jumpBonus
   
 
 countPieces :: Board -> (Int, Int)
