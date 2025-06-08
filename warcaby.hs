@@ -8,16 +8,58 @@ type Board = [[Char]]
 type Position = (Int, Int)
 
 initialBoard :: Board
-initialBoard =
-  [ "x.x.x.x."
-  , ".x.x.x.x"
-  , "x.x.x.x."
+-- initialBoard =
+--   [ "x.x.x.x."
+--   , ".x.x.x.x"
+--   , "x.x.x.x."
+--   , "........"
+--   , "........"
+--   , ".o.o.o.o"
+--   , "o.o.o.o."
+--   , ".o.o.o.o"
+--   ]
+
+-- initialBoard = -- end game debug
+--   , "........"
+--   , "........"
+--   , "........"
+--   , "........"
+--   , "......x."
+--   , ".o.o.o.o"
+--   , "o.o.o.o."
+--   , ".o.o.o.o"
+--   ]
+
+-- initialBoard = --debug (taki ruch jest możliwy: 7 7 5 5 7 3 5 1 3 3 5 5 3 7 1 5 3 3 1 1)
+--   [ "........"
+--   , "........"
+--   , "..x.x.x."
+--   , "........"
+--   , "..x.x.x."
+--   , "........"
+--   , "..x.x.x."
+--   , ".o...o.o"
+--   ]
+
+initialBoard = --promocja
+  [ "........"
+  , ".......o"
   , "........"
   , "........"
-  , ".o.o.o.o"
-  , "o.o.o.o."
-  , ".o.o.o.o"
+  , ".x......"
+  , "........"
+  , "........"
+  , ".o...o.o"
   ]
+  
+
+countPieces :: Board -> (Int, Int)
+countPieces board =
+  let allPieces = concat board
+      lowerPieces = map toLower allPieces
+      countX = length (filter (== 'x') lowerPieces)
+      countO = length (filter (== 'o') lowerPieces)
+  in (countX, countO)
 
 printBoard :: Board -> IO ()
 printBoard board = do
@@ -53,6 +95,7 @@ makeMove :: Board -> Position -> Position -> Maybe Board
 makeMove board from@(fr, fc) to@(tr, tc)
   | not (isInside from && isInside to) = Nothing
   | piece == '.' || toPiece /= '.' = Nothing
+  | isRegularPawn && movingBackward = Nothing
   | abs (fr - tr) == 1 && abs (fc - tc) == 1 =
       Just $ promoteIfNeeded (setPiece (setPiece board from '.') to piece) to
   | abs (fr - tr) == 2 && abs (fc - tc) == 2 =
@@ -65,6 +108,9 @@ makeMove board from@(fr, fc) to@(tr, tc)
   where
     piece = getPiece board from
     toPiece = getPiece board to
+    isRegularPawn = piece == 'x' || piece == 'o'
+    movingBackward =
+      (piece == 'x' && tr < fr) || (piece == 'o' && tr > fr)
 
 promoteIfNeeded :: Board -> Position -> Board
 promoteIfNeeded board (r, c)
@@ -126,26 +172,32 @@ makeMovesSequence board positions =
 gameLoop :: Board -> Bool -> IO ()
 gameLoop board isWhiteTurn = do
   printBoard board
-  putStrLn $ if isWhiteTurn then "Białe (o) ruszają" else "Czarne (x) ruszają"
-  putStrLn "Podaj ruch w formacie: r1 c1 r2 c2 ..."
-  input <- getLine
-  let maybeInts = map readMaybe (words input) :: [Maybe Int]
-  if any (== Nothing) maybeInts
-    then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
-    else
-      let ints = map (\(Just x) -> x) maybeInts
-      in if length ints < 4 || odd (length ints)
-           then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
-           else
-             let coords = pairUp ints
-                 start@(r1, c1) = head coords
-                 piece = getPiece board start
-                 isCorrectPiece = (isWhiteTurn && toLower piece == 'o') || (not isWhiteTurn && toLower piece == 'x')
-             in if not isCorrectPiece
-                  then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
-                  else case makeMovesSequence board coords of
-                         Just newBoard -> gameLoop newBoard (not isWhiteTurn)
-                         Nothing       -> putStrLn "Nieprawidłowy ruch!" >> gameLoop board isWhiteTurn
+  let (countX, countO) = countPieces board
+  if countX == 0
+    then putStrLn "Białe (o) wygrały!!"
+  else if countO == 0
+    then putStrLn "Czarne (x) wygrały!"
+  else do
+    putStrLn $ if isWhiteTurn then "Białe (o) ruszają" else "Czarne (x) ruszają"
+    putStrLn "Podaj ruch w formacie: r1 c1 r2 c2 ..."
+    input <- getLine
+    let maybeInts = map readMaybe (words input) :: [Maybe Int]
+    if any (== Nothing) maybeInts
+      then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+      else
+        let ints = map (\(Just x) -> x) maybeInts
+        in if length ints < 4 || odd (length ints)
+            then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+            else
+              let coords = pairUp ints
+                  start@(r1, c1) = head coords
+                  piece = getPiece board start
+                  isCorrectPiece = (isWhiteTurn && toLower piece == 'o') || (not isWhiteTurn && toLower piece == 'x')
+              in if not isCorrectPiece
+                    then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
+                    else case makeMovesSequence board coords of
+                          Just newBoard -> gameLoop newBoard (not isWhiteTurn)
+                          Nothing       -> putStrLn "Nieprawidłowy ruch!" >> gameLoop board isWhiteTurn
 
 pairUp :: [Int] -> [Position]
 pairUp []         = []
