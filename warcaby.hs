@@ -3,21 +3,25 @@ module Main where
 import Data.Char (toLower, toUpper)
 import Data.List (intercalate)
 import Control.Monad (when)
-
-type Board = [[Char]]
+type Board = [[Maybe Char]]
 type Position = (Int, Int)
 
 initialBoard :: Board
 initialBoard =
-  [ "x.x.x.x."
-  , ".x.x.x.x"
-  , "x.x.x.x."
+  map (map toMaybe)
+  [ "........"
   , "........"
+  , "..x.x.x."
   , "........"
-  , ".o.o.o.o"
-  , "o.o.o.o."
-  , ".o.o.o.o"
+  , "..x.x.x."
+  , "........"
+  , "..x.x.x."
+  , ".o...o.o"
   ]
+  where
+    toMaybe '.' = Nothing
+    toMaybe x   = Just x
+
 
 -- initialBoard = -- end game debug
 --   , "........"
@@ -62,13 +66,12 @@ initialBoard =
 --   , ".....O.."
 --   , "........"
 --   ]
-
 countPossibleJumps :: Board -> Char -> Int
 countPossibleJumps board player =
   length [ (r, c)
          | r <- [0..7], c <- [0..7]
-         , let p = getPiece board (r, c)
-         , toLower p == player
+         , let mp = getPiece board (r, c)
+         , Just p <- [mp], toLower p == player
          , any (canJumpFrom (r, c) p) [(-1,-1), (-1,1), (1,-1), (1,1)]
          ]
   where
@@ -76,8 +79,8 @@ countPossibleJumps board player =
       let middle = (r + dr, c + dc)
           target = (r + 2*dr, c + 2*dc)
       in isInside middle && isInside target &&
-         enemy piece (getPiece board middle) &&
-         getPiece board target == '.'
+         maybe False (enemy piece) (getPiece board middle) &&
+         getPiece board target == Nothing
 
 scorePiece :: Char -> Int
 scorePiece p
@@ -91,26 +94,24 @@ evaluateBoard :: Board -> Int
 evaluateBoard board =
   let allPieces = concat board
       jumpBonus = 2 * countPossibleJumps board 'o' - 2 * countPossibleJumps board 'x'
-  in sum (map scorePiece allPieces) + jumpBonus
-  
+  in sum (map (maybe 0 scorePiece) allPieces) + jumpBonus
 
 countPieces :: Board -> (Int, Int)
 countPieces board =
-  let allPieces = concat board
-      lowerPieces = map toLower allPieces
-      countX = length (filter (== 'x') lowerPieces)
-      countO = length (filter (== 'o') lowerPieces)
+  let allPieces = map (fmap toLower) (concat board)
+      countX = length (filter (== Just 'x') allPieces)
+      countO = length (filter (== Just 'o') allPieces)
   in (countX, countO)
 
 printBoard :: Board -> IO ()
 printBoard board = do
   putStrLn "  0 1 2 3 4 5 6 7"
-  mapM_ putStrLn [show r ++ " " ++ intercalate " " [ [board !! r !! c] | c <- [0..7]] | r <- [0..7]]
+  mapM_ putStrLn [show r ++ " " ++ intercalate " " [maybe "." (:[]) (board !! r !! c) | c <- [0..7]] | r <- [0..7]]
 
-getPiece :: Board -> Position -> Char
+getPiece :: Board -> Position -> Maybe Char
 getPiece board (r, c) = board !! r !! c
 
-setPiece :: Board -> Position -> Char -> Board
+setPiece :: Board -> Position -> Maybe Char -> Board
 setPiece board (r, c) piece =
   take r board ++
   [take c (board !! r) ++ [piece] ++ drop (c + 1) (board !! r)] ++
@@ -135,65 +136,63 @@ enemy p target =
 makeMove :: Board -> Position -> Position -> Maybe Board
 makeMove board from@(fr, fc) to@(tr, tc)
   | not (isInside from && isInside to) = Nothing
-  | piece == '.' || toPiece /= '.' = Nothing
-  | isRegularPawn && movingBackward = Nothing
+  | piece == Nothing || toPiece /= Nothing = Nothing
+  | isRegularPawn && movingBackward && not isJump = Nothing
   | abs (fr - tr) == 1 && abs (fc - tc) == 1 =
-      Just $ promoteIfNeeded (setPiece (setPiece board from '.') to piece) to
+      Just $ promoteIfNeeded (setPiece (setPiece board from Nothing) to piece) to
   | abs (fr - tr) == 2 && abs (fc - tc) == 2 =
       let jumped = ((fr + tr) `div` 2, (fc + tc) `div` 2)
           jumpedPiece = getPiece board jumped
-      in if enemy piece jumpedPiece
-         then Just $ promoteIfNeeded (setPiece (setPiece (setPiece board from '.') jumped '.') to piece) to
+      in if maybe False (enemy (unwrap piece)) jumpedPiece
+         then Just $ promoteIfNeeded (setPiece (setPiece (setPiece board from Nothing) jumped Nothing) to piece) to
          else Nothing
   | otherwise = Nothing
   where
+    isJump = abs (fr - tr) == 2 && abs (fc - tc) == 2
     piece = getPiece board from
     toPiece = getPiece board to
-    isRegularPawn = piece == 'x' || piece == 'o'
-    movingBackward =
-      (piece == 'x' && tr < fr) || (piece == 'o' && tr > fr)
+    isRegularPawn = maybe False (`elem` "xo") piece
+    movingBackward = case piece of
+      Just 'x' -> tr < fr
+      Just 'o' -> tr > fr
+      _        -> False
+    unwrap (Just x) = x
+    unwrap Nothing  = error "Unexpected Nothing"
 
 promoteIfNeeded :: Board -> Position -> Board
-promoteIfNeeded board (r, c)
-  | piece == 'o' && r == 0 = setPiece board (r, c) 'O'
-  | piece == 'x' && r == 7 = setPiece board (r, c) 'X'
-  | otherwise = board
-  where piece = getPiece board (r, c)
+promoteIfNeeded board (r, c) =
+  case getPiece board (r, c) of
+    Just 'o' | r == 0 -> setPiece board (r, c) (Just 'O')
+    Just 'x' | r == 7 -> setPiece board (r, c) (Just 'X')
+    _                 -> board
 
 hasAnotherJump :: Board -> Position -> Bool
 hasAnotherJump board pos@(r, c) =
-  any canJump directions
-  where
-    piece = getPiece board pos
-    directions = [(-1,-1), (-1,1), (1,-1), (1,1)]  -- wszystkie kierunki
-    canJump (dr, dc) =
-      let middle = (r + dr, c + dc)
-          target = (r + 2*dr, c + 2*dc)
-      in isInside middle && isInside target &&
-         enemy piece (getPiece board middle) &&
-         getPiece board target == '.'
-         
+  case getPiece board pos of
+    Nothing -> False
+    Just piece -> any canJump [(-1,-1), (-1,1), (1,-1), (1,1)]
+      where
+        canJump (dr, dc) =
+          let middle = (r + dr, c + dc)
+              target = (r + 2*dr, c + 2*dc)
+          in isInside middle && isInside target &&
+             maybe False (enemy piece) (getPiece board middle) &&
+             getPiece board target == Nothing
+
 makeMovesSequence :: Board -> [Position] -> Maybe Board
 makeMovesSequence board positions = 
   case positions of
-    (start:_) ->
-      applyMoves board positions
+    (start:_) -> applyMoves board positions
     _ -> Nothing
   where
-    applyMoves :: Board -> [Position] -> Maybe Board
     applyMoves b [from, to] =
       let dr = abs (fst from - fst to)
           dc = abs (snd from - snd to)
       in case (dr, dc) of
-           (1, 1) -> 
-             makeMove b from to
-           (2, 2) ->
-             case makeMove b from to of
-               Just nb ->
-                 if hasAnotherJump nb to
-                   then Nothing
-                   else Just nb
-               Nothing -> Nothing
+           (1, 1) -> makeMove b from to
+           (2, 2) -> case makeMove b from to of
+                       Just nb -> if hasAnotherJump nb to then Nothing else Just nb
+                       Nothing -> Nothing
            _ -> Nothing
 
     applyMoves b (from:to:next:rest) =
@@ -201,23 +200,19 @@ makeMovesSequence board positions =
           dc = abs (snd from - snd to)
       in if (dr, dc) == (2, 2)
            then case makeMove b from to of
-                  Just nb ->
-                    if hasAnotherJump nb to
-                      then applyMoves nb (to:next:rest)
-                      else Nothing
+                  Just nb -> if hasAnotherJump nb to
+                               then applyMoves nb (to:next:rest)
+                               else Nothing
                   Nothing -> Nothing
            else Nothing
     applyMoves _ _ = Nothing
 
--- TODO nie możemy się cofaać dla x/o
 gameLoop :: Board -> Bool -> IO ()
 gameLoop board isWhiteTurn = do
   printBoard board
   let (countX, countO) = countPieces board
-  if countX == 0
-    then putStrLn "Białe (o) wygrały!!"
-  else if countO == 0
-    then putStrLn "Czarne (x) wygrały!"
+  if countX == 0 then putStrLn "Białe (o) wygrały!!"
+  else if countO == 0 then putStrLn "Czarne (x) wygrały!"
   else do
     putStrLn $ if isWhiteTurn then "Białe (o) ruszają" else "Czarne (x) ruszają"
     putStrLn "Podaj ruch w formacie: r1 c1 r2 c2 ..."
@@ -233,7 +228,9 @@ gameLoop board isWhiteTurn = do
               let coords = pairUp ints
                   start@(r1, c1) = head coords
                   piece = getPiece board start
-                  isCorrectPiece = (isWhiteTurn && toLower piece == 'o') || (not isWhiteTurn && toLower piece == 'x')
+                  isCorrectPiece = case piece of
+                    Just p -> (isWhiteTurn && toLower p == 'o') || (not isWhiteTurn && toLower p == 'x')
+                    _      -> False
               in if not isCorrectPiece
                     then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
                     else case makeMovesSequence board coords of
