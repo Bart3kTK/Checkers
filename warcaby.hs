@@ -1,10 +1,32 @@
+{-# LANGUAGE TupleSections #-}
 module Main where
 
+import Graphics.Gloss
+import Graphics.Gloss.Interface.Pure.Game
 import Data.Char (toLower, toUpper)
 import Data.List (intercalate)
+import Data.Maybe (fromMaybe)
 import Control.Monad (when)
+
 type Board = [[Maybe Char]]
 type Position = (Int, Int)
+
+windowSize, cellSize :: Int
+windowSize = 800
+cellSize = windowSize `div` 8
+
+data GameState = GameState
+  { board :: Board
+  , selected :: Maybe Position
+  , isWhiteTurn :: Bool
+  , statusMessage :: String
+  }
+
+cellSizeF :: Float
+cellSizeF = 100
+
+windowSizeF :: Int
+windowSizeF = 800
 
 initialBoard :: Board
 initialBoard =
@@ -207,45 +229,105 @@ makeMovesSequence board positions =
            else Nothing
     applyMoves _ _ = Nothing
 
-gameLoop :: Board -> Bool -> IO ()
-gameLoop board isWhiteTurn = do
-  printBoard board
-  let (countX, countO) = countPieces board
-  if countX == 0 then putStrLn "Białe (o) wygrały!!"
-  else if countO == 0 then putStrLn "Czarne (x) wygrały!"
-  else do
-    putStrLn $ if isWhiteTurn then "Białe (o) ruszają" else "Czarne (x) ruszają"
-    putStrLn "Podaj ruch w formacie: r1 c1 r2 c2 ..."
-    input <- getLine
-    let maybeInts = map readMaybe (words input) :: [Maybe Int]
-    if any (== Nothing) maybeInts
-      then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
-      else
-        let ints = map (\(Just x) -> x) maybeInts
-        in if length ints < 4 || odd (length ints)
-            then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
-            else
-              let coords = pairUp ints
-                  start@(r1, c1) = head coords
-                  piece = getPiece board start
-                  isCorrectPiece = case piece of
-                    Just p -> (isWhiteTurn && toLower p == 'o') || (not isWhiteTurn && toLower p == 'x')
-                    _      -> False
-              in if not isCorrectPiece
-                    then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
-                    else case makeMovesSequence board coords of
-                          Just newBoard -> gameLoop newBoard (not isWhiteTurn)
-                          Nothing       -> putStrLn "Nieprawidłowy ruch!" >> gameLoop board isWhiteTurn
+-- gameLoop :: Board -> Bool -> IO ()
+-- gameLoop board isWhiteTurn = do
+--   printBoard board
+--   let (countX, countO) = countPieces board
+--   if countX == 0 then putStrLn "Białe (o) wygrały!!"
+--   else if countO == 0 then putStrLn "Czarne (x) wygrały!"
+--   else do
+--     putStrLn $ if isWhiteTurn then "Białe (o) ruszają" else "Czarne (x) ruszają"
+--     putStrLn "Podaj ruch w formacie: r1 c1 r2 c2 ..."
+--     input <- getLine
+--     let maybeInts = map readMaybe (words input) :: [Maybe Int]
+--     if any (== Nothing) maybeInts
+--       then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+--       else
+--         let ints = map (\(Just x) -> x) maybeInts
+--         in if length ints < 4 || odd (length ints)
+--             then putStrLn "Zły format!" >> gameLoop board isWhiteTurn
+--             else
+--               let coords = pairUp ints
+--                   start@(r1, c1) = head coords
+--                   piece = getPiece board start
+--                   isCorrectPiece = case piece of
+--                     Just p -> (isWhiteTurn && toLower p == 'o') || (not isWhiteTurn && toLower p == 'x')
+--                     _      -> False
+--               in if not isCorrectPiece
+--                     then putStrLn "Nie twoja figura!" >> gameLoop board isWhiteTurn
+--                     else case makeMovesSequence board coords of
+--                           Just newBoard -> gameLoop newBoard (not isWhiteTurn)
+--                           Nothing       -> putStrLn "Nieprawidłowy ruch!" >> gameLoop board isWhiteTurn
 
-pairUp :: [Int] -> [Position]
-pairUp []         = []
-pairUp (r:c:rest) = (r, c) : pairUp rest
-pairUp _          = []
+-- pairUp :: [Int] -> [Position]
+-- pairUp []         = []
+-- pairUp (r:c:rest) = (r, c) : pairUp rest
+-- pairUp _          = []
 
-readMaybe :: Read a => String -> Maybe a
-readMaybe s = case reads s of
-  [(val, "")] -> Just val
-  _           -> Nothing
+-- readMaybe :: Read a => String -> Maybe a
+-- readMaybe s = case reads s of
+--   [(val, "")] -> Just val
+--   _           -> Nothing
+
+
+renderCell :: Position -> Maybe Char -> Picture
+renderCell (r, c) mPiece =
+  let x = fromIntegral c * cellSizeF - 4 * cellSizeF + cellSizeF / 2
+      y = 4 * cellSizeF - fromIntegral r * cellSizeF - cellSizeF / 2
+      baseColor = if even (r + c) then greyN 0.8 else greyN 0.3
+      base = Color baseColor $ rectangleSolid cellSizeF cellSizeF
+      piece = case mPiece of
+        Just 'o' -> translate 0 0 $ Color white $ thickCircle (cellSizeF/4) 10
+        Just 'x' -> translate 0 0 $ Color black $ thickCircle (cellSizeF/4) 10
+        Just 'O' -> translate 0 0 $ Color white $ circleSolid (cellSizeF/4)
+        Just 'X' -> translate 0 0 $ Color black $ circleSolid (cellSizeF/4)
+        _        -> Blank
+  in translate x y $ Pictures [base, piece]
+
+renderBoard :: Board -> Picture
+renderBoard b = Pictures [renderCell (r, c) (b !! r !! c) | r <- [0..7], c <- [0..7]]
+
+renderGame :: GameState -> Picture
+renderGame gs = Pictures
+  [ renderBoard (board gs)
+  , translate (-390) (-380) $ scale 0.15 0.15 $ color white $ Text (statusMessage gs)
+  , case selected gs of
+      Just (r,c) -> translate (-390) (-350) $ scale 0.15 0.15 $ color yellow $ Text ("Wybrano: " ++ show (r,c))
+      Nothing -> Blank
+  ]
+
+
+handleEvent :: Event -> GameState -> GameState
+handleEvent (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
+  let (mx, my) = mousePos
+      row = floor ((4 * cellSizeF - my) / cellSizeF)
+      col = floor ((mx + 4 * cellSizeF) / cellSizeF)
+      pos = (row, col)
+  in if not (isInside pos)
+     then gs { statusMessage = "Kliknij w planszę" }
+     else case selected gs of
+       Nothing ->
+         let piece = getPiece (board gs) pos
+         in case piece of
+              Just p | (isWhiteTurn gs && toLower p == 'o') || (not (isWhiteTurn gs) && toLower p == 'x') ->
+                gs { selected = Just pos, statusMessage = "Wybrano figurę " ++ show pos }
+              _ -> gs { statusMessage = "Nieprawidłowy wybór" }
+       Just from ->
+         let tryMove = makeMove (board gs) from pos
+         in case tryMove of
+              Just newBoard -> gs { board = newBoard, selected = Nothing, isWhiteTurn = not (isWhiteTurn gs), statusMessage = "Wykonano ruch" }
+              Nothing       -> gs { selected = Nothing, statusMessage = "Nieprawidłowy ruch" }
+handleEvent _ gs = gs
+
+updateGame :: Float -> GameState -> GameState
+updateGame _ gs = gs
 
 main :: IO ()
-main = gameLoop initialBoard True
+main = play
+  (InWindow "Warcaby" (windowSize, windowSize) (100, 100))
+  black
+  30
+  (GameState initialBoard Nothing True "Kliknij sobie")
+  renderGame
+  handleEvent
+  updateGame
