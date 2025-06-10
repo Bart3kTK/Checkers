@@ -35,11 +35,11 @@ initialBoard =
   map (map toMaybe)
   [ "........"
   , "........"
-  , "..x.x.x."
-  , "........"
-  , "..x.x.x."
-  , "........"
-  , "..x.x.x."
+  , "..x...x."
+  , ".....o.."
+  , "..x....."
+  , ".....o.."
+  , "..o....."
   , ".o...o.o"
   ]
   where
@@ -92,19 +92,13 @@ initialBoard =
 --   ]
 countPossibleJumps :: Board -> Char -> Int
 countPossibleJumps board player =
-  length [ (r, c)
-         | r <- [0..7], c <- [0..7]
-         , let mp = getPiece board (r, c)
-         , Just p <- [mp], toLower p == player
-         , any (canJumpFrom (r, c) p) [(-1,-1), (-1,1), (1,-1), (1,1)]
-         ]
-  where
-    canJumpFrom (r, c) piece (dr, dc) =
-      let middle = (r + dr, c + dc)
-          target = (r + 2*dr, c + 2*dc)
-      in isInside middle && isInside target &&
-         maybe False (enemy piece) (getPiece board middle) &&
-         getPiece board target == Nothing
+  sum
+    [ length (filter (\seq -> length seq > 1) (allJumpSequences board pos))
+    | r <- [0..7], c <- [0..7]
+    , let pos = (r, c)
+    , Just p <- [getPiece board pos]
+    , toLower p == toLower player
+    ]
 
 scorePiece :: Char -> Int
 scorePiece p
@@ -118,8 +112,25 @@ evaluateBoard :: Board -> Int
 evaluateBoard board =
   let allPieces = concat board
       jumpBonus = 2 * countPossibleJumps board 'o' - 2 * countPossibleJumps board 'x'
-  in sum (map (maybe 0 scorePiece) allPieces) + jumpBonus
+      exposureBonus = countExposures board 'o' - countExposures board 'x'
+  in sum (map (maybe 0 scorePiece) allPieces) + jumpBonus + exposureBonus
 
+-- Premiuje możliwość zbicia przeciwnika w następnym ruchu (podstawienie się pod bicie)
+countExposures :: Board -> Char -> Int
+countExposures board player =
+  sum
+    [ 1
+    | r <- [0..7], c <- [0..7]
+    , let pos = (r, c)
+    , Just p <- [getPiece board pos]
+    , toLower p /= toLower player  -- pionek przeciwnika
+    , (dr, dc) <- [(-1,-1), (-1,1), (1,-1), (1,1)]
+    , let before = (r - dr, c - dc)
+    , let after  = (r + dr, c + dc)
+    , isInside before, isInside after
+    , getPiece board before == Just player
+    , getPiece board after == Nothing
+    ]
 countPieces :: Board -> (Int, Int)
 countPieces board =
   let allPieces = concat board
@@ -127,6 +138,8 @@ countPieces board =
       countO = length (filter (\p -> p == Just 'o' || p == Just 'O') allPieces)
   in (countX, countO)
 
+jumpDirs :: [Position]
+jumpDirs = [(-1,-1), (-1,1), (1,-1), (1,1)]
 
 -- Zwraca wszystkie możliwe sekwencje bić dla danego pionka
 allJumpSequences :: Board -> Position -> [[Position]]
@@ -137,53 +150,66 @@ allJumpSequences board start =
       Just p  -> go board [start]
   where
     go b path@(current:_) =
-      let jumps = [ target
-                  | (dr, dc) <- moveDirs (unwrap (getPiece b current))
+      let jumps = [ (target, newBoard)
+                  | (dr, dc) <- jumpDirs
                   , let middle = (fst current + dr, snd current + dc)
                   , let target = (fst current + 2*dr, snd current + 2*dc)
                   , isInside middle, isInside target
                   , maybe False (enemy (unwrap (getPiece b current))) (getPiece b middle)
                   , getPiece b target == Nothing
+                  , let b1 = setPiece b current Nothing
+                  , let b2 = setPiece b1 middle Nothing
+                  , let b3 = setPiece b2 target (getPiece b current)
+                  , let newBoard = promoteIfNeeded b3 target
                   ]
       in if null jumps
          then [reverse path]
-         else concat [ go (fromJust (makeMovesSequence b [current, target])) (target:path)
-                    | target <- jumps
-                    , let mb = makeMovesSequence b [current, target]
-                    , mb /= Nothing
+         else concat [ go newBoard (target:path)
+                    | (target, newBoard) <- jumps
                     ]
     unwrap (Just x) = x
     unwrap Nothing  = error "Unexpected Nothing"
-    fromJust (Just x) = x
-    fromJust Nothing  = error "Unexpected Nothing"
 
--- Zwraca wszystkie możliwe ruchy (tylko bicie jeśli jest możliwe, w przeciwnym razie zwykłe ruchy)
 allMoves :: Board -> Bool -> [(Position, Position, Board)]
 allMoves board isWhite =
-  if not (null allJumps)
-    then [ (head seq, last seq, fromJust (makeMovesSequence board seq))
-         | seq <- maxJumpSeqs, length seq > 1 ]
-    else [ (from, to, newBoard)
-         | r <- [0..7], c <- [0..7]
-         , let from = (r, c)
-         , Just p <- [getPiece board from]
-         , (isWhite && toLower p == 'o') || (not isWhite && toLower p == 'x')
-         , (dr, dc) <- moveDirs p
-         , let to = (r + dr, c + dc)
-         , isInside to
-         , Just newBoard <- [makeMove board from to]
-         ]
-  where
-    positions = [ (r, c)
-                | r <- [0..7], c <- [0..7]
-                , Just p <- [getPiece board (r, c)]
-                , (isWhite && toLower p == 'o') || (not isWhite && toLower p == 'x')
-                ]
-    allJumps = concatMap (allJumpSequences board) positions
-    maxLen = maximum (0 : map length allJumps)
-    maxJumpSeqs = filter (\seq -> length seq == maxLen && length seq > 1) allJumps
-    fromJust (Just x) = x
-    fromJust Nothing  = error "Unexpected Nothing"
+  let positions = [ (r, c)
+                  | r <- [0..7], c <- [0..7]
+                  , Just p <- [getPiece board (r, c)]
+                  , (isWhite && toLower p == 'o') || (not isWhite && toLower p == 'x')
+                  ]
+      -- Wszystkie możliwe sekwencje bić (jeśli są)
+      allJumps = [ (head seq, last seq, applyJumps board seq)
+                 | pos <- positions
+                 , seq <- allJumpSequences board pos
+                 , length seq > 1
+                 ]
+      -- Wszystkie zwykłe ruchy (jeśli nie ma bić)
+      allNormals = [ (from, to, newBoard)
+                   | (r, c) <- positions
+                   , let from = (r, c)
+                   , Just p <- [getPiece board from]
+                   , (dr, dc) <- moveDirs p
+                   , let to = (r + dr, c + dc)
+                   , isInside to
+                   , getPiece board to == Nothing
+                   , let newBoard = promoteIfNeeded (setPiece (setPiece board from Nothing) to (Just p)) to
+                   ]
+  in if not (null allJumps) then allJumps else allNormals
+
+-- Pomocnicza funkcja do wykonania sekwencji bić
+applyJumps :: Board -> [Position] -> Board
+applyJumps b (x1:x2:xs) =
+  let (fr, fc) = x1
+      (tr, tc) = x2
+      mr = (fr + tr) `div` 2
+      mc = (fc + tc) `div` 2
+      p = getPiece b x1
+      b1 = setPiece b x1 Nothing
+      b2 = setPiece b1 (mr, mc) Nothing
+      b3 = setPiece b2 x2 p
+      b4 = promoteIfNeeded b3 x2
+  in if null xs then b4 else applyJumps b4 (x2:xs)
+applyJumps b _ = b
 
 minimax :: Board -> Int -> Bool -> Int -> Int -> Int
 minimax board depth isWhite alpha beta
@@ -475,7 +501,7 @@ handleEventBot (EventKey (MouseButton LeftButton) Up modifiers mousePos) gs =
                                      then gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Białe wygrywają!" }
                                      else if newCountO == 0
                                           then gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Czarne wygrywają!" }
-                                          else let botMove = chooseBestOrAnyMove newBoard 3 False 
+                                          else let botMove = chooseBestOrAnyMove newBoard 6 False 
                                                in case botMove of
                                                     Just botBoard ->
                                                       let (finalCountX, finalCountO) = countPieces botBoard
