@@ -122,10 +122,11 @@ evaluateBoard board =
 
 countPieces :: Board -> (Int, Int)
 countPieces board =
-  let allPieces = map (fmap toLower) (concat board)
-      countX = length (filter (== Just 'x') allPieces)
-      countO = length (filter (== Just 'o') allPieces)
+  let allPieces = concat board
+      countX = length (filter (\p -> p == Just 'x' || p == Just 'X') allPieces)
+      countO = length (filter (\p -> p == Just 'o' || p == Just 'O') allPieces)
   in (countX, countO)
+
 
 -- Zwraca wszystkie możliwe sekwencje bić dla danego pionka
 allJumpSequences :: Board -> Position -> [[Position]]
@@ -395,6 +396,10 @@ renderGame gs = Pictures
                 color yellow $
                   Text ("Wybrano: " ++ show xs)
   ]
+hasPiecesLeft :: Board -> Bool
+hasPiecesLeft board =
+  let (countX, countO) = countPieces board
+  in countX > 0 && countO > 0
 
 handleEvent :: Event -> GameState -> GameState
 handleEvent (EventKey (MouseButton LeftButton) Up modifiers mousePos) gs =
@@ -421,7 +426,10 @@ handleEvent (EventKey (MouseButton LeftButton) Up modifiers mousePos) gs =
            let fullSequence = selectedPositions ++ [pos]
            in case makeMovesSequence (board gs) fullSequence of
                 Just newBoard ->
-                  gs { board = newBoard, selected = [], isWhiteTurn = not (isWhiteTurn gs), statusMessage = "Wykonano sekwencję ruchów" }
+                  let updatedGameState = gs { board = newBoard, selected = [], isWhiteTurn = not (isWhiteTurn gs), statusMessage = "Wykonano sekwencję ruchów" }
+                  in if not (hasPiecesLeft newBoard)
+                     then updatedGameState { statusMessage = "Koniec gry! Jeden z graczy stracił wszystkie pionki." }
+                     else updatedGameState
                 Nothing ->
                   gs { selected = [], statusMessage = "Nieprawidłowa sekwencja ruchów" }
 
@@ -433,36 +441,54 @@ isCtrlPressed _ = False
 
 handleEventBot :: Event -> GameState -> GameState
 handleEventBot (EventKey (MouseButton LeftButton) Up modifiers mousePos) gs =
-  let (mx, my) = mousePos
-      row = floor ((4 * cellSizeF - my) / cellSizeF)
-      col = floor ((mx + 4 * cellSizeF) / cellSizeF)
-      pos = (row, col)
-  in if not (isInside pos)
-     then gs { statusMessage = "Kliknij w planszę" }
-     else case selected gs of
-       [] ->
-         let piece = getPiece (board gs) pos
-         in case piece of
-              Just p | isWhiteTurn gs && toLower p == 'o' ->
-                gs { selected = [pos], statusMessage = "Wybrano figurę " ++ show pos }
-              _ -> gs { statusMessage = "Nie możesz wybrać tej figury!" }
+  let board' = board gs
+      (countX, countO) = countPieces board'
+  in if countX == 0 
+     then gs { statusMessage = "Białe wygrywają!" }
+     else if countO == 0
+          then gs { statusMessage = "Czarne wygrywają!" }
+          else let (mx, my) = mousePos
+                   row = floor ((4 * cellSizeF - my) / cellSizeF)
+                   col = floor ((mx + 4 * cellSizeF) / cellSizeF)
+                   pos = (row, col)
+               in if not (isInside pos)
+                  then gs { statusMessage = "Kliknij w planszę" }
+                  else case selected gs of
+                       [] ->
+                         let piece = getPiece board' pos
+                         in case piece of
+                              Just p | isWhiteTurn gs && toLower p == 'o' ->
+                                gs { selected = [pos], statusMessage = "Wybrano figurę " ++ show pos }
+                              _ -> gs { statusMessage = "Nie możesz wybrać tej figury!" }
 
-       selectedPositions@(start:_) ->
-         if isCtrlPressed modifiers
-         then
-           let newSelection = selectedPositions ++ [pos]
-           in gs { selected = newSelection, statusMessage = "Dodano pozycję: " ++ show pos }
-         else
-           let fullSequence = selectedPositions ++ [pos]
-           in case makeMovesSequence (board gs) fullSequence of
-                Just newBoard ->
-                  let botMove = chooseBestOrAnyMove newBoard 3 False -- Bot gra czarnymi
-                  in case botMove of
-                    Just botBoard -> gs { board = botBoard, selected = [], isWhiteTurn = True, statusMessage = "Bot wykonał ruch" }
-                    Nothing -> gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Brak możliwego ruchu dla bota" }
-                Nothing -> gs { selected = [], statusMessage = "Nieprawidłowa sekwencja ruchów" }
+                       selectedPositions@(start:_) ->
+                         if isCtrlPressed modifiers
+                         then
+                           let newSelection = selectedPositions ++ [pos]
+                           in gs { selected = newSelection, statusMessage = "Dodano pozycję: " ++ show pos }
+                         else
+                           let fullSequence = selectedPositions ++ [pos]
+                           in case makeMovesSequence board' fullSequence of
+                                Just newBoard ->
+                                  let (newCountX, newCountO) = countPieces newBoard
+                                  in if newCountX == 0
+                                     then gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Białe wygrywają!" }
+                                     else if newCountO == 0
+                                          then gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Czarne wygrywają!" }
+                                          else let botMove = chooseBestOrAnyMove newBoard 3 False 
+                                               in case botMove of
+                                                    Just botBoard ->
+                                                      let (finalCountX, finalCountO) = countPieces botBoard
+                                                      in if finalCountX == 0
+                                                         then gs { board = botBoard, selected = [], isWhiteTurn = True, statusMessage = "Białe wygrywają!" }
+                                                         else if finalCountO == 0
+                                                              then gs { board = botBoard, selected = [], isWhiteTurn = True, statusMessage = "Czarne wygrywają!" }
+                                                              else gs { board = botBoard, selected = [], isWhiteTurn = True, statusMessage = "Bot wykonał ruch" }
+                                                    Nothing -> gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Białe wygrywają!" }
+                                Nothing -> gs { selected = [], statusMessage = "Nieprawidłowa sekwencja ruchów" }
 
 handleEventBot _ gs = gs
+
 
 updateGame :: Float -> GameState -> GameState
 updateGame _ gs = gs
