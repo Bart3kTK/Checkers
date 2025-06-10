@@ -7,7 +7,7 @@ import Data.Char (toLower, toUpper)
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Control.Monad (when)
-import System.Random (randomRIO)
+-- import System.Random (randomRIO)
 
 
 type Board = [[Maybe Char]]
@@ -211,18 +211,16 @@ bestMove board depth isWhite =
   in if null scored then Nothing else Just (snd (maximum scored))
 
 -- Zwraca najlepszy ruch (planszę) jeśli jest, a jeśli nie ma - losowy lub pierwszy możliwy ruch
-chooseBestOrAnyMove :: Board -> Int -> Bool -> IO (Maybe Board)
-chooseBestOrAnyMove board depth isWhite = do
+chooseBestOrAnyMove :: Board -> Int -> Bool -> Maybe Board
+chooseBestOrAnyMove board depth isWhite =
   let moves = allMoves board isWhite
       scored = [ (minimax b (depth-1) (not isWhite) (-10000) 10000, b) | (_, _, b) <- moves ]
-  if not (null scored)
-    then return $ Just (snd (maximum scored))
-    else if not (null moves)
-      then do
-        idx <- randomRIO (0, length moves - 1)
-        let (_, _, b) = moves !! idx
-        return $ Just b
-      else return Nothing
+  in if not (null scored)
+       then Just (snd (maximum scored))
+       else if not (null moves)
+         then Just (let (_, _, b) = head moves in b)
+         else Nothing
+
 
 printBoard :: Board -> IO ()
 printBoard board = do
@@ -396,6 +394,8 @@ renderGame gs = Pictures
   ]
 
 
+
+
 handleEvent :: Event -> GameState -> GameState
 handleEvent (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
   let (mx, my) = mousePos
@@ -418,6 +418,34 @@ handleEvent (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
               Nothing       -> gs { selected = Nothing, statusMessage = "Nieprawidłowy ruch" }
 handleEvent _ gs = gs
 
+
+handleEventBot (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
+  let (mx, my) = mousePos
+      row = floor ((4 * cellSizeF - my) / cellSizeF)
+      col = floor ((mx + 4 * cellSizeF) / cellSizeF)
+      pos = (row, col)
+  in if not (isInside pos)
+     then gs { statusMessage = "Kliknij w planszę" }
+     else case selected gs of
+       Nothing ->
+         let piece = getPiece (board gs) pos
+         in case piece of
+              Just p | isWhiteTurn gs && toLower p == 'o' -> -- Ograniczenie do białych
+                gs { selected = Just pos, statusMessage = "Wybrano figurę " ++ show pos }
+              _ -> gs { statusMessage = "Nie możesz wybrać tej figury!" } -- Blokada dla czarnych
+       Just from ->
+         let tryMove = makeMove (board gs) from pos
+         in case tryMove of
+              Just newBoard ->
+                let botMove = chooseBestOrAnyMove newBoard 3 False -- Bot gra czarnymi
+                in case botMove of
+                     Just botBoard -> gs { board = botBoard, selected = Nothing, isWhiteTurn = True, statusMessage = "Bot wykonał ruch" }
+                     Nothing -> gs { board = newBoard, selected = Nothing, isWhiteTurn = True, statusMessage = "Brak możliwego ruchu dla bota" }
+              Nothing -> gs { selected = Nothing, statusMessage = "Nieprawidłowy ruch" }
+handleEventBot _ gs = gs
+
+
+
 updateGame :: Float -> GameState -> GameState
 updateGame _ gs = gs
 
@@ -429,4 +457,14 @@ main = play
   (GameState initialBoard Nothing True "Kliknij sobie")
   renderGame
   handleEvent
+  updateGame
+
+mainBot :: IO ()
+mainBot = play
+  (InWindow "Warcaby" (windowSize, windowSize) (100, 100))
+  black
+  30
+  (GameState initialBoard Nothing True "Kliknij sobie")
+  renderGame
+  handleEventBot
   updateGame
