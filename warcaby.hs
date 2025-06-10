@@ -19,7 +19,7 @@ cellSize = windowSize `div` 8
 
 data GameState = GameState
   { board :: Board
-  , selected :: Maybe Position
+  , selected :: [Position]
   , isWhiteTurn :: Bool
   , statusMessage :: String
   }
@@ -389,15 +389,15 @@ renderGame gs = Pictures
   [ renderBoard (board gs)
   , translate (-390) (-380) $ scale 0.15 0.15 $ color white $ Text (statusMessage gs)
   , case selected gs of
-      Just (r,c) -> translate (-390) (-350) $ scale 0.15 0.15 $ color yellow $ Text ("Wybrano: " ++ show (r,c))
-      Nothing -> Blank
+      [] -> Blank
+      xs -> translate (-390) (-350) $
+              scale 0.15 0.15 $
+                color yellow $
+                  Text ("Wybrano: " ++ show xs)
   ]
 
-
-
-
 handleEvent :: Event -> GameState -> GameState
-handleEvent (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
+handleEvent (EventKey (MouseButton LeftButton) Up modifiers mousePos) gs =
   let (mx, my) = mousePos
       row = floor ((4 * cellSizeF - my) / cellSizeF)
       col = floor ((mx + 4 * cellSizeF) / cellSizeF)
@@ -405,21 +405,34 @@ handleEvent (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
   in if not (isInside pos)
      then gs { statusMessage = "Kliknij w planszę" }
      else case selected gs of
-       Nothing ->
+       [] ->
          let piece = getPiece (board gs) pos
          in case piece of
               Just p | (isWhiteTurn gs && toLower p == 'o') || (not (isWhiteTurn gs) && toLower p == 'x') ->
-                gs { selected = Just pos, statusMessage = "Wybrano figurę " ++ show pos }
+                gs { selected = [pos], statusMessage = "Wybrano figurę " ++ show pos }
               _ -> gs { statusMessage = "Nieprawidłowy wybór" }
-       Just from ->
-         let tryMove = makeMove (board gs) from pos
-         in case tryMove of
-              Just newBoard -> gs { board = newBoard, selected = Nothing, isWhiteTurn = not (isWhiteTurn gs), statusMessage = "Wykonano ruch" }
-              Nothing       -> gs { selected = Nothing, statusMessage = "Nieprawidłowy ruch" }
+
+       selectedPositions@(start:_) ->
+         if isCtrlPressed modifiers
+         then
+           let newSelection = selectedPositions ++ [pos]
+           in gs { selected = newSelection, statusMessage = "Dodano pozycję: " ++ show pos }
+         else
+           let fullSequence = selectedPositions ++ [pos]
+           in case makeMovesSequence (board gs) fullSequence of
+                Just newBoard ->
+                  gs { board = newBoard, selected = [], isWhiteTurn = not (isWhiteTurn gs), statusMessage = "Wykonano sekwencję ruchów" }
+                Nothing ->
+                  gs { selected = [], statusMessage = "Nieprawidłowa sekwencja ruchów" }
+
 handleEvent _ gs = gs
 
+isCtrlPressed :: Modifiers -> Bool
+isCtrlPressed (Modifiers { ctrl = Down }) = True
+isCtrlPressed _ = False
 
-handleEventBot (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
+handleEventBot :: Event -> GameState -> GameState
+handleEventBot (EventKey (MouseButton LeftButton) Up modifiers mousePos) gs =
   let (mx, my) = mousePos
       row = floor ((4 * cellSizeF - my) / cellSizeF)
       col = floor ((mx + 4 * cellSizeF) / cellSizeF)
@@ -427,24 +440,29 @@ handleEventBot (EventKey (MouseButton LeftButton) Up _ mousePos) gs =
   in if not (isInside pos)
      then gs { statusMessage = "Kliknij w planszę" }
      else case selected gs of
-       Nothing ->
+       [] ->
          let piece = getPiece (board gs) pos
          in case piece of
-              Just p | isWhiteTurn gs && toLower p == 'o' -> -- Ograniczenie do białych
-                gs { selected = Just pos, statusMessage = "Wybrano figurę " ++ show pos }
-              _ -> gs { statusMessage = "Nie możesz wybrać tej figury!" } -- Blokada dla czarnych
-       Just from ->
-         let tryMove = makeMove (board gs) from pos
-         in case tryMove of
-              Just newBoard ->
-                let botMove = chooseBestOrAnyMove newBoard 3 False -- Bot gra czarnymi
-                in case botMove of
-                     Just botBoard -> gs { board = botBoard, selected = Nothing, isWhiteTurn = True, statusMessage = "Bot wykonał ruch" }
-                     Nothing -> gs { board = newBoard, selected = Nothing, isWhiteTurn = True, statusMessage = "Brak możliwego ruchu dla bota" }
-              Nothing -> gs { selected = Nothing, statusMessage = "Nieprawidłowy ruch" }
+              Just p | isWhiteTurn gs && toLower p == 'o' ->
+                gs { selected = [pos], statusMessage = "Wybrano figurę " ++ show pos }
+              _ -> gs { statusMessage = "Nie możesz wybrać tej figury!" }
+
+       selectedPositions@(start:_) ->
+         if isCtrlPressed modifiers
+         then
+           let newSelection = selectedPositions ++ [pos]
+           in gs { selected = newSelection, statusMessage = "Dodano pozycję: " ++ show pos }
+         else
+           let fullSequence = selectedPositions ++ [pos]
+           in case makeMovesSequence (board gs) fullSequence of
+                Just newBoard ->
+                  let botMove = chooseBestOrAnyMove newBoard 3 False -- Bot gra czarnymi
+                  in case botMove of
+                    Just botBoard -> gs { board = botBoard, selected = [], isWhiteTurn = True, statusMessage = "Bot wykonał ruch" }
+                    Nothing -> gs { board = newBoard, selected = [], isWhiteTurn = True, statusMessage = "Brak możliwego ruchu dla bota" }
+                Nothing -> gs { selected = [], statusMessage = "Nieprawidłowa sekwencja ruchów" }
+
 handleEventBot _ gs = gs
-
-
 
 updateGame :: Float -> GameState -> GameState
 updateGame _ gs = gs
@@ -454,7 +472,7 @@ main = play
   (InWindow "Warcaby" (windowSize, windowSize) (100, 100))
   black
   30
-  (GameState initialBoard Nothing True "Kliknij sobie")
+  (GameState initialBoard [] True "Kliknij sobie")
   renderGame
   handleEvent
   updateGame
@@ -464,7 +482,7 @@ mainBot = play
   (InWindow "Warcaby" (windowSize, windowSize) (100, 100))
   black
   30
-  (GameState initialBoard Nothing True "Kliknij sobie")
+  (GameState initialBoard [] True "Kliknij sobie")
   renderGame
   handleEventBot
   updateGame
