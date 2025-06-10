@@ -7,6 +7,8 @@ import Data.Char (toLower, toUpper)
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Control.Monad (when)
+import System.Random (randomRIO)
+
 
 type Board = [[Maybe Char]]
 type Position = (Int, Int)
@@ -124,6 +126,103 @@ countPieces board =
       countX = length (filter (== Just 'x') allPieces)
       countO = length (filter (== Just 'o') allPieces)
   in (countX, countO)
+
+-- Zwraca wszystkie możliwe sekwencje bić dla danego pionka
+allJumpSequences :: Board -> Position -> [[Position]]
+allJumpSequences board start =
+  let piece = getPiece board start
+  in case piece of
+      Nothing -> []
+      Just p  -> go board [start]
+  where
+    go b path@(current:_) =
+      let jumps = [ target
+                  | (dr, dc) <- moveDirs (unwrap (getPiece b current))
+                  , let middle = (fst current + dr, snd current + dc)
+                  , let target = (fst current + 2*dr, snd current + 2*dc)
+                  , isInside middle, isInside target
+                  , maybe False (enemy (unwrap (getPiece b current))) (getPiece b middle)
+                  , getPiece b target == Nothing
+                  ]
+      in if null jumps
+         then [reverse path]
+         else concat [ go (fromJust (makeMovesSequence b [current, target])) (target:path)
+                    | target <- jumps
+                    , let mb = makeMovesSequence b [current, target]
+                    , mb /= Nothing
+                    ]
+    unwrap (Just x) = x
+    unwrap Nothing  = error "Unexpected Nothing"
+    fromJust (Just x) = x
+    fromJust Nothing  = error "Unexpected Nothing"
+
+-- Zwraca wszystkie możliwe ruchy (tylko bicie jeśli jest możliwe, w przeciwnym razie zwykłe ruchy)
+allMoves :: Board -> Bool -> [(Position, Position, Board)]
+allMoves board isWhite =
+  if not (null allJumps)
+    then [ (head seq, last seq, fromJust (makeMovesSequence board seq))
+         | seq <- maxJumpSeqs, length seq > 1 ]
+    else [ (from, to, newBoard)
+         | r <- [0..7], c <- [0..7]
+         , let from = (r, c)
+         , Just p <- [getPiece board from]
+         , (isWhite && toLower p == 'o') || (not isWhite && toLower p == 'x')
+         , (dr, dc) <- moveDirs p
+         , let to = (r + dr, c + dc)
+         , isInside to
+         , Just newBoard <- [makeMove board from to]
+         ]
+  where
+    positions = [ (r, c)
+                | r <- [0..7], c <- [0..7]
+                , Just p <- [getPiece board (r, c)]
+                , (isWhite && toLower p == 'o') || (not isWhite && toLower p == 'x')
+                ]
+    allJumps = concatMap (allJumpSequences board) positions
+    maxLen = maximum (0 : map length allJumps)
+    maxJumpSeqs = filter (\seq -> length seq == maxLen && length seq > 1) allJumps
+    fromJust (Just x) = x
+    fromJust Nothing  = error "Unexpected Nothing"
+
+minimax :: Board -> Int -> Bool -> Int -> Int -> Int
+minimax board depth isWhite alpha beta
+  | depth == 0 = evaluateBoard board
+  | null moves = evaluateBoard board
+  | isWhite = maxValue moves alpha beta
+  | otherwise = minValue moves alpha beta
+  where
+    moves = [b | (_, _, b) <- allMoves board isWhite]
+
+    maxValue [] a _ = a
+    maxValue (m:ms) a b =
+      let v = max a (minimax m (depth-1) False a b)
+      in if v >= b then v else maxValue ms v b
+
+    minValue [] _ b = b
+    minValue (m:ms) a b =
+      let v = min b (minimax m (depth-1) True a b)
+      in if v <= a then v else minValue ms a v
+
+
+bestMove :: Board -> Int -> Bool -> Maybe Board
+bestMove board depth isWhite =
+  let moves = allMoves board isWhite
+      scored = [ (minimax b (depth-1) (not isWhite) (-10000) 10000, b) | (_, _, b) <- moves ]
+  in if null scored then Nothing else Just (snd (maximum scored))
+
+-- Zwraca najlepszy ruch (planszę) jeśli jest, a jeśli nie ma - losowy lub pierwszy możliwy ruch
+chooseBestOrAnyMove :: Board -> Int -> Bool -> IO (Maybe Board)
+chooseBestOrAnyMove board depth isWhite = do
+  let moves = allMoves board isWhite
+      scored = [ (minimax b (depth-1) (not isWhite) (-10000) 10000, b) | (_, _, b) <- moves ]
+  if not (null scored)
+    then return $ Just (snd (maximum scored))
+    else if not (null moves)
+      then do
+        idx <- randomRIO (0, length moves - 1)
+        let (_, _, b) = moves !! idx
+        return $ Just b
+      else return Nothing
 
 printBoard :: Board -> IO ()
 printBoard board = do
